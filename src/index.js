@@ -1,40 +1,16 @@
 import { DurableObject } from "cloudflare:workers";
-
-export class DogfightRoom extends DurableObject {
-  constructor(ctx, env) { super(ctx, env); this.ctx=ctx; }
-  async fetch(request) {
-    if (request.headers.get("Upgrade") !== "websocket") return new Response("WebSocket required",{status:426});
-    const pair=new WebSocketPair(); const [client,server]=Object.values(pair);
-    const existing=this.ctx.getWebSockets();
-    if(existing.length>=4) return new Response("Room full",{status:409});
-    const id=crypto.randomUUID(); const slot=[0,1,2,3].find(s=>!existing.some(w=>{try{return w.deserializeAttachment()?.slot===s}catch{return false}}));
-    const host=existing.length===0;
-    server.serializeAttachment({id,slot,host});
-    this.ctx.acceptWebSocket(server);
-    server.send(JSON.stringify({type:"welcome",id,slot,host}));
-    this.broadcastLobby();
-    return new Response(null,{status:101,webSocket:client});
-  }
-  broadcast(obj){const s=JSON.stringify(obj);for(const ws of this.ctx.getWebSockets())try{ws.send(s)}catch{}}
-  broadcastLobby(){
-    const players=this.ctx.getWebSockets().map(ws=>{const a=ws.deserializeAttachment()||{};return {id:a.id,slot:a.slot,host:!!a.host}});
-    this.broadcast({type:"lobby",players});
-  }
-  async webSocketMessage(ws,msg){
-    let m;try{m=JSON.parse(typeof msg==="string"?msg:new TextDecoder().decode(msg))}catch{return}
-    const a=ws.deserializeAttachment()||{};
-    if(m.type==="input") this.broadcast({type:"input",slot:a.slot,l:!!m.l,r:!!m.r,f:!!m.f});
-    if(m.type==="start"&&a.host) this.broadcast({type:"start",count:this.ctx.getWebSockets().length});
-  }
-  async webSocketClose(ws){try{ws.close(1000,"bye")}catch{};this.broadcastLobby()}
+const W=1600,GROUND=790,S=[{x:120,y:755,a:0,f:1},{x:1480,y:755,a:Math.PI,f:-1},{x:560,y:755,a:Math.PI,f:-1},{x:1040,y:755,a:0,f:1}],C=(v,a,b)=>Math.max(a,Math.min(b,v)),A=a=>Math.atan2(Math.sin(a),Math.cos(a));
+export class DogfightRoom extends DurableObject{
+ constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.p=new Map;this.b=[];this.run=false;this.last=Date.now();this.timer=null;this.win=null}
+ make(slot){let s=S[slot];return{slot,x:s.x,y:s.y,a:s.a,face:s.f,v:0,grounded:true,alive:true,lives:3,hp:4,spawn:1.6,i:{l:false,r:false,f:false},cd:0,heat:0,over:false}}
+ async fetch(r){if(r.headers.get("Upgrade")!=="websocket")return new Response("WebSocket required",{status:426});let pair=new WebSocketPair(),[client,server]=Object.values(pair),ws=this.ctx.getWebSockets();if(ws.length>=4)return new Response("Room full",{status:409});let used=new Set(ws.map(w=>w.deserializeAttachment()?.slot)),slot=[0,1,2,3].find(n=>!used.has(n)),id=crypto.randomUUID(),host=!ws.length;server.serializeAttachment({id,slot,host});this.ctx.acceptWebSocket(server);this.p.set(slot,this.make(slot));server.send(JSON.stringify({type:"welcome",id,slot,host}));this.lobby();return new Response(null,{status:101,webSocket:client})}
+ send(o){let s=JSON.stringify(o);for(let w of this.ctx.getWebSockets())try{w.send(s)}catch{}}
+ lobby(){this.send({type:"lobby",players:this.ctx.getWebSockets().map(w=>{let a=w.deserializeAttachment();return{id:a.id,slot:a.slot,host:a.host}})})}
+ start(){this.b=[];this.win=null;for(let w of this.ctx.getWebSockets()){let a=w.deserializeAttachment();this.p.set(a.slot,this.make(a.slot))}this.run=true;this.last=Date.now();this.send({type:"start",count:this.ctx.getWebSockets().length});if(!this.timer)this.timer=setInterval(()=>this.tick(),50)}
+ tick(){if(!this.run)return;let n=Date.now(),dt=C((n-this.last)/1000,.02,.08);this.last=n;for(let p of this.p.values())this.step(p,dt);for(let b of this.b){b.x+=b.vx*dt;b.y+=b.vy*dt;b.life-=dt;for(let p of this.p.values())if(p.alive&&p.slot!==b.owner&&p.spawn<=0&&Math.hypot(p.x-b.x,p.y-b.y)<28){b.life=0;if(--p.hp<=0)this.kill(p)}}this.b=this.b.filter(b=>b.life>0);let alive=[...this.p.values()].filter(p=>p.alive||p.lives>0);if(alive.length<=1&&this.p.size>1){this.run=false;this.win=alive[0]?.slot??0}this.send({type:"snapshot",players:[...this.p.values()].map(p=>({slot:p.slot,x:p.x,y:p.y,a:p.a,v:p.v,grounded:p.grounded,alive:p.alive,lives:p.lives,hp:p.hp,spawn:p.spawn})),bullets:this.b.map(b=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,owner:b.owner})),winner:this.win})}
+ step(p,d){if(!p.alive)return;let I=p.i,t=2.55;p.cd-=d;if(!p.grounded)p.spawn=Math.max(0,p.spawn-d);if(p.grounded){p.v=Math.min(250,p.v+175*d);p.x+=p.face*p.v*d;let lift=p.face===1?I.l:I.r;if(lift&&p.v>72){let q=p.face===1?-.42:Math.PI+.42,e=A(q-p.a);p.a+=Math.sign(e)*Math.min(Math.abs(e),t*.72*d)}if(p.v>150&&Math.sin(p.a)<-.16){p.grounded=false;p.y=GROUND-38;p.v=270}}else{if(I.l)p.a-=t*d;if(I.r)p.a+=t*d;p.v+=(300-p.v)*1.8*d;p.x+=Math.cos(p.a)*p.v*d;p.y+=Math.sin(p.a)*p.v*d;if(p.x<-55)p.x=W+55;if(p.x>W+55)p.x=-55;if(p.y<55){p.y=55;p.a=Math.abs(p.a)}if(p.y>GROUND-18)this.kill(p)}if(p.over){p.heat=Math.max(0,p.heat-.62*d);if(p.heat<=.03){p.heat=0;p.over=false}}else if(!I.f)p.heat=Math.max(0,p.heat-.48*d);if(I.f&&!p.over&&p.cd<=0&&!p.grounded){p.cd=.225;p.heat+=.155;this.b.push({x:p.x+Math.cos(p.a)*35,y:p.y+Math.sin(p.a)*35,vx:Math.cos(p.a)*780,vy:Math.sin(p.a)*780,life:1.15,owner:p.slot});if(p.heat>=1){p.heat=1;p.over=true;p.cd=1.55}}}
+ kill(p){if(!p.alive)return;p.alive=false;if(--p.lives>0)setTimeout(()=>{let q=this.make(p.slot);q.lives=p.lives;this.p.set(p.slot,q)},1700)}
+ async webSocketMessage(w,m){let x;try{x=JSON.parse(typeof m==="string"?m:new TextDecoder().decode(m))}catch{return}let a=w.deserializeAttachment(),p=this.p.get(a.slot);if(x.type==="input"&&p)p.i={l:!!x.l,r:!!x.r,f:!!x.f};if((x.type==="start"||x.type==="rematch")&&a.host)this.start();if(x.type==="ping")try{w.send(JSON.stringify({type:"pong",clientTime:x.clientTime}))}catch{}}
+ async webSocketClose(w){let a=w.deserializeAttachment();this.p.delete(a?.slot);this.lobby();if(!this.ctx.getWebSockets().length&&this.timer){clearInterval(this.timer);this.timer=null;this.run=false}}
 }
-
-export default {
-  async fetch(request,env){
-    const u=new URL(request.url);
-    const m=u.pathname.match(/^\/room\/([A-Z0-9]{5})$/i);
-    if(!m) return new Response("Dogfight Arena multiplayer service");
-    const id=env.DOGFIGHT_ROOMS.idFromName(m[1].toUpperCase());
-    return env.DOGFIGHT_ROOMS.get(id).fetch(request);
-  }
-};
+export default{async fetch(r,e){let u=new URL(r.url),m=u.pathname.match(/^\/room\/([A-Z0-9]{5})$/i);if(!m)return new Response("Dogfight Arena multiplayer V7");let id=e.DOGFIGHT_ROOMS.idFromName(m[1].toUpperCase());return e.DOGFIGHT_ROOMS.get(id).fetch(r)}};
