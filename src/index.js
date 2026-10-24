@@ -31,14 +31,14 @@ export class DogfightRoom extends DurableObject {
       x: s.x, y: s.y, a: s.a, face: s.face,
       v: 0, grounded: true, alive: true,
       lives: 3, hp: 4, spawn: 1.6,
-      input: { l: false, r: false, f: false },
+      input: { l: false, r: false, f: false }, lastSeq: -1,
       fireCD: 0, heat: 0, over: false
     };
   }
 
   async fetch(request) {
     if (request.headers.get("Upgrade") !== "websocket") {
-      return new Response("Dogfight Arena multiplayer V9", { status: 200 });
+      return new Response("Dogfight Arena multiplayer V10", { status: 200 });
     }
 
     const pair = new WebSocketPair();
@@ -56,7 +56,7 @@ export class DogfightRoom extends DurableObject {
     this.ctx.acceptWebSocket(server);
     this.players.set(slot, this.makePlayer(slot));
 
-    server.send(JSON.stringify({ type: "welcome", id, slot, host, serverVersion: 9 }));
+    server.send(JSON.stringify({ type: "welcome", id, slot, host, serverVersion: 10 }));
     this.broadcastLobby();
 
     return new Response(null, { status: 101, webSocket: client });
@@ -74,7 +74,7 @@ export class DogfightRoom extends DurableObject {
       const a = ws.deserializeAttachment();
       return { id: a.id, slot: a.slot, host: a.host };
     });
-    this.broadcast({ type: "lobby", players, serverVersion: 9 });
+    this.broadcast({ type: "lobby", players, serverVersion: 10 });
   }
 
   startMatch() {
@@ -97,7 +97,7 @@ export class DogfightRoom extends DurableObject {
       type: "start",
       count: sockets.length,
       slots: sockets.map(ws => ws.deserializeAttachment().slot),
-      serverVersion: 9
+      serverVersion: 10
     });
 
     // 30 Hz authoritative simulation/snapshots for smoother phones/tablets.
@@ -145,7 +145,7 @@ export class DogfightRoom extends DurableObject {
         slot: p.slot, x: p.x, y: p.y, a: p.a, v: p.v,
         grounded: p.grounded, alive: p.alive,
         lives: p.lives, hp: p.hp, spawn: p.spawn,
-        heat: p.heat, over: p.over
+        heat: p.heat, over: p.over, lastSeq: p.lastSeq
       })),
       bullets: this.bullets.map(b => ({
         x: b.x, y: b.y, vx: b.vx, vy: b.vy, owner: b.owner
@@ -260,7 +260,11 @@ export class DogfightRoom extends DurableObject {
     const p = this.players.get(attachment.slot);
 
     if (message.type === "input" && p) {
-      p.input = { l: !!message.l, r: !!message.r, f: !!message.f };
+      const seq = Number.isFinite(message.seq) ? message.seq : ((p.lastSeq ?? -1) + 1);
+      if (seq >= (p.lastSeq ?? -1)) {
+        p.lastSeq = seq;
+        p.input = { l: !!message.l, r: !!message.r, f: !!message.f };
+      }
     }
 
     if ((message.type === "start" || message.type === "rematch") && attachment.host) {
@@ -272,7 +276,7 @@ export class DogfightRoom extends DurableObject {
         ws.send(JSON.stringify({
           type: "pong",
           clientTime: message.clientTime,
-          serverVersion: 9
+          serverVersion: 10
         }));
       } catch {}
     }
@@ -296,7 +300,7 @@ export default {
     const url = new URL(request.url);
     const match = url.pathname.match(/^\/room\/([A-Z0-9]{5})$/i);
 
-    if (!match) return new Response("Dogfight Arena multiplayer V9");
+    if (!match) return new Response("Dogfight Arena multiplayer V10");
 
     const id = env.DOGFIGHT_ROOMS.idFromName(match[1].toUpperCase());
     return env.DOGFIGHT_ROOMS.get(id).fetch(request);
