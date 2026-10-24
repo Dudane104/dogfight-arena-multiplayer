@@ -2,6 +2,8 @@ import { DurableObject } from "cloudflare:workers";
 
 const WORLD_W = 1600;
 const GROUND = 790;
+const RUNWAY_LEFT = 48;
+const RUNWAY_RIGHT = 1552;
 const STARTS = [
   { x: 120,  y: 755, a: 0,       face: 1 },
   { x: 1480, y: 755, a: Math.PI, face: -1 },
@@ -39,7 +41,7 @@ export class DogfightRoom extends DurableObject {
 
   async fetch(request) {
     if (request.headers.get("Upgrade") !== "websocket") {
-      return new Response("Dogfight Arena multiplayer V11", { status: 200 });
+      return new Response("Dogfight Arena multiplayer V12", { status: 200 });
     }
 
     const pair = new WebSocketPair();
@@ -57,7 +59,7 @@ export class DogfightRoom extends DurableObject {
     this.ctx.acceptWebSocket(server);
     this.players.set(slot, this.makePlayer(slot));
 
-    server.send(JSON.stringify({ type: "welcome", id, slot, host, serverVersion: 11 }));
+    server.send(JSON.stringify({ type: "welcome", id, slot, host, serverVersion: 12 }));
     this.broadcastLobby();
 
     return new Response(null, { status: 101, webSocket: client });
@@ -75,7 +77,7 @@ export class DogfightRoom extends DurableObject {
       const a = ws.deserializeAttachment();
       return { id: a.id, slot: a.slot, host: a.host };
     });
-    this.broadcast({ type: "lobby", players, serverVersion: 11 });
+    this.broadcast({ type: "lobby", players, serverVersion: 12 });
   }
 
   startMatch() {
@@ -98,7 +100,7 @@ export class DogfightRoom extends DurableObject {
       type: "start",
       count: sockets.length,
       slots: sockets.map(ws => ws.deserializeAttachment().slot),
-      serverVersion: 11
+      serverVersion: 12
     });
 
     // 30 Hz authoritative simulation/snapshots for smoother phones/tablets.
@@ -142,7 +144,7 @@ export class DogfightRoom extends DurableObject {
     }
 
     this.broadcast({
-      type: "snapshot", serverVersion: 11, tick: this.tickId,
+      type: "snapshot", serverVersion: 12, tick: this.tickId,
       players: [...this.players.values()].map(p => ({
         slot: p.slot, x: p.x, y: p.y, a: p.a, v: p.v,
         grounded: p.grounded, alive: p.alive,
@@ -168,17 +170,28 @@ export class DogfightRoom extends DurableObject {
       p.v = Math.min(250, p.v + 175 * dt);
       p.x += p.face * p.v * dt;
 
-      const lift = p.face === 1 ? I.l : I.r;
+      const liftInput = p.face === 1 ? I.l : I.r;
+      // Multiplayer safety: if a player forgets to rotate for takeoff, gently force
+      // the nose up before the runway ends rather than letting the aircraft vanish.
+      const nearRunwayEnd = (p.face === 1 && p.x > RUNWAY_RIGHT - 210) ||
+                            (p.face === -1 && p.x < RUNWAY_LEFT + 210);
+      const lift = liftInput || nearRunwayEnd;
       if (lift && p.v > 72) {
         const target = p.face === 1 ? -0.42 : Math.PI + 0.42;
         const err = angle(target - p.a);
-        p.a += Math.sign(err) * Math.min(Math.abs(err), turn * 0.72 * dt);
+        p.a += Math.sign(err) * Math.min(Math.abs(err), turn * (nearRunwayEnd ? 1.15 : 0.72) * dt);
       }
 
       if (p.v > 150 && Math.sin(p.a) < -0.16) {
         p.grounded = false;
         p.y = GROUND - 38;
         p.v = 270;
+      }
+
+      // Absolute failsafe: a grounded aircraft can never leave the playable arena.
+      if (p.grounded && (p.x < RUNWAY_LEFT || p.x > RUNWAY_RIGHT)) {
+        p.x = clamp(p.x, RUNWAY_LEFT, RUNWAY_RIGHT);
+        p.v = 0;
       }
     } else {
       if (I.l) p.a -= turn * dt;
@@ -278,7 +291,7 @@ export class DogfightRoom extends DurableObject {
         ws.send(JSON.stringify({
           type: "pong",
           clientTime: message.clientTime,
-          serverVersion: 11
+          serverVersion: 12
         }));
       } catch {}
     }
@@ -302,7 +315,7 @@ export default {
     const url = new URL(request.url);
     const match = url.pathname.match(/^\/room\/([A-Z0-9]{5})$/i);
 
-    if (!match) return new Response("Dogfight Arena multiplayer V11");
+    if (!match) return new Response("Dogfight Arena multiplayer V12");
 
     const id = env.DOGFIGHT_ROOMS.idFromName(match[1].toUpperCase());
     return env.DOGFIGHT_ROOMS.get(id).fetch(request);
