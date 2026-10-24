@@ -24,6 +24,7 @@ export class DogfightRoom extends DurableObject {
     this.lastTick = Date.now();
     this.timer = null;
     this.winner = null;
+    this.allowOverheat = true;
     this.tickId = 0;
   }
 
@@ -41,7 +42,7 @@ export class DogfightRoom extends DurableObject {
 
   async fetch(request) {
     if (request.headers.get("Upgrade") !== "websocket") {
-      return new Response("Dogfight Arena multiplayer V12", { status: 200 });
+      return new Response("Dogfight Arena multiplayer V13", { status: 200 });
     }
 
     const pair = new WebSocketPair();
@@ -59,7 +60,7 @@ export class DogfightRoom extends DurableObject {
     this.ctx.acceptWebSocket(server);
     this.players.set(slot, this.makePlayer(slot));
 
-    server.send(JSON.stringify({ type: "welcome", id, slot, host, serverVersion: 12 }));
+    server.send(JSON.stringify({ type: "welcome", id, slot, host, serverVersion: 13 }));
     this.broadcastLobby();
 
     return new Response(null, { status: 101, webSocket: client });
@@ -77,10 +78,11 @@ export class DogfightRoom extends DurableObject {
       const a = ws.deserializeAttachment();
       return { id: a.id, slot: a.slot, host: a.host };
     });
-    this.broadcast({ type: "lobby", players, serverVersion: 12 });
+    this.broadcast({ type: "lobby", players, serverVersion: 13 });
   }
 
-  startMatch() {
+  startMatch(overheat = this.allowOverheat) {
+    this.allowOverheat = overheat !== false;
     const sockets = this.ctx.getWebSockets();
     if (sockets.length < 2) return;
 
@@ -100,7 +102,7 @@ export class DogfightRoom extends DurableObject {
       type: "start",
       count: sockets.length,
       slots: sockets.map(ws => ws.deserializeAttachment().slot),
-      serverVersion: 12
+      serverVersion: 13
     });
 
     // 30 Hz authoritative simulation/snapshots for smoother phones/tablets.
@@ -144,7 +146,7 @@ export class DogfightRoom extends DurableObject {
     }
 
     this.broadcast({
-      type: "snapshot", serverVersion: 12, tick: this.tickId,
+      type: "snapshot", serverVersion: 13, tick: this.tickId,
       players: [...this.players.values()].map(p => ({
         slot: p.slot, x: p.x, y: p.y, a: p.a, v: p.v,
         grounded: p.grounded, alive: p.alive,
@@ -214,7 +216,10 @@ export class DogfightRoom extends DurableObject {
       if (p.y > GROUND - 18) { this.killPlayer(p); return; }
     }
 
-    if (p.over) {
+    if (!this.allowOverheat) {
+      p.over = false;
+      p.heat = 0;
+    } else if (p.over) {
       p.heat = Math.max(0, p.heat - 0.62 * dt);
       if (p.heat <= 0.03) {
         p.heat = 0;
@@ -237,7 +242,7 @@ export class DogfightRoom extends DurableObject {
         owner: p.slot
       });
 
-      if (p.heat >= 1) {
+      if (this.allowOverheat && p.heat >= 1) {
         p.heat = 1;
         p.over = true;
         p.fireCD = 1.55;
@@ -283,7 +288,7 @@ export class DogfightRoom extends DurableObject {
     }
 
     if ((message.type === "start" || message.type === "rematch") && attachment.host) {
-      this.startMatch();
+      this.startMatch(message.overheat !== false);
     }
 
     if (message.type === "ping") {
@@ -291,7 +296,7 @@ export class DogfightRoom extends DurableObject {
         ws.send(JSON.stringify({
           type: "pong",
           clientTime: message.clientTime,
-          serverVersion: 12
+          serverVersion: 13
         }));
       } catch {}
     }
@@ -315,7 +320,7 @@ export default {
     const url = new URL(request.url);
     const match = url.pathname.match(/^\/room\/([A-Z0-9]{5})$/i);
 
-    if (!match) return new Response("Dogfight Arena multiplayer V12");
+    if (!match) return new Response("Dogfight Arena multiplayer V13");
 
     const id = env.DOGFIGHT_ROOMS.idFromName(match[1].toUpperCase());
     return env.DOGFIGHT_ROOMS.get(id).fetch(request);
