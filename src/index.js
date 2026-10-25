@@ -42,7 +42,7 @@ export class DogfightRoom extends DurableObject {
 
   async fetch(request) {
     if (request.headers.get("Upgrade") !== "websocket") {
-      return new Response("Dogfight Arena multiplayer V15", { status: 200 });
+      return new Response("Dogfight Arena multiplayer V16", { status: 200 });
     }
 
     const pair = new WebSocketPair();
@@ -60,7 +60,7 @@ export class DogfightRoom extends DurableObject {
     this.ctx.acceptWebSocket(server);
     this.players.set(slot, this.makePlayer(slot));
 
-    server.send(JSON.stringify({ type: "welcome", id, slot, host, serverVersion: 15 }));
+    server.send(JSON.stringify({ type: "welcome", id, slot, host, serverVersion: 16 }));
     this.broadcastLobby();
 
     return new Response(null, { status: 101, webSocket: client });
@@ -78,7 +78,7 @@ export class DogfightRoom extends DurableObject {
       const a = ws.deserializeAttachment();
       return { id: a.id, slot: a.slot, host: a.host };
     });
-    this.broadcast({ type: "lobby", players, serverVersion: 15 });
+    this.broadcast({ type: "lobby", players, serverVersion: 16, rules: { overheat: this.allowOverheat } });
   }
 
   startMatch() {
@@ -101,7 +101,7 @@ export class DogfightRoom extends DurableObject {
       type: "start",
       count: sockets.length,
       slots: sockets.map(ws => ws.deserializeAttachment().slot),
-      serverVersion: 15,
+      serverVersion: 16,
       rules: { overheat: this.allowOverheat }
     });
 
@@ -118,6 +118,15 @@ export class DogfightRoom extends DurableObject {
     this.lastTick = now;
 
     for (const p of this.players.values()) this.stepPlayer(p, dt);
+
+    // Same mid-air collision rule as offline.
+    const aircraft=[...this.players.values()];
+    for(let i=0;i<aircraft.length;i++)for(let j=i+1;j<aircraft.length;j++){
+      const a=aircraft[i],b=aircraft[j];
+      if(a.alive&&b.alive&&!a.grounded&&!b.grounded&&a.spawn<=0&&b.spawn<=0&&Math.hypot(a.x-b.x,a.y-b.y)<42){
+        this.killPlayer(a);this.killPlayer(b);
+      }
+    }
 
     for (const b of this.bullets) {
       b.x += b.vx * dt;
@@ -146,7 +155,7 @@ export class DogfightRoom extends DurableObject {
     }
 
     this.broadcast({
-      type: "snapshot", serverVersion: 15, tick: this.tickId,
+      type: "snapshot", serverVersion: 16, tick: this.tickId,
       players: [...this.players.values()].map(p => ({
         slot: p.slot, x: p.x, y: p.y, a: p.a, v: p.v,
         grounded: p.grounded, alive: p.alive,
@@ -164,7 +173,7 @@ export class DogfightRoom extends DurableObject {
     if (!p.alive) return;
 
     const I = p.input;
-    const turn = 2.55;
+    const turn = 2.25;
     p.fireCD -= dt;
     if (!p.grounded) p.spawn = Math.max(0, p.spawn - dt);
 
@@ -181,7 +190,7 @@ export class DogfightRoom extends DurableObject {
       if (lift && p.v > 72) {
         const target = p.face === 1 ? -0.42 : Math.PI + 0.42;
         const err = angle(target - p.a);
-        p.a += Math.sign(err) * Math.min(Math.abs(err), turn * (nearRunwayEnd ? 1.15 : 0.72) * dt);
+        p.a += Math.sign(err) * Math.min(Math.abs(err), turn * (nearRunwayEnd ? 1.18 : 0.72) * dt);
       }
 
       if (p.v > 150 && Math.sin(p.a) < -0.16) {
@@ -199,21 +208,21 @@ export class DogfightRoom extends DurableObject {
       if (I.l) p.a -= turn * dt;
       if (I.r) p.a += turn * dt;
 
-      p.v += (300 - p.v) * 1.8 * dt;
+      p.v += (300 - p.v) * 1.4 * dt;
       p.x += Math.cos(p.a) * p.v * dt;
       p.y += Math.sin(p.a) * p.v * dt;
 
       if (p.x < -55) p.x = WORLD_W + 55;
       if (p.x > WORLD_W + 55) p.x = -55;
 
-      if (p.y < 55) {
-        p.y = 55;
-        p.a = Math.abs(p.a);
+      if (p.y < 50) {
+        p.y = 50;
+        if (Math.sin(p.a) < 0) p.a += 0.6;
       }
 
       // Tower is intentionally NOT a collision object in V9.
       // Aircraft are drawn in front of it on the client.
-      if (p.y > GROUND - 18) { this.killPlayer(p); return; }
+      if (p.y > GROUND - 20) { this.killPlayer(p); return; }
     }
 
     if (!this.allowOverheat) {
@@ -231,13 +240,13 @@ export class DogfightRoom extends DurableObject {
 
     if (I.f && !p.over && p.fireCD <= 0 && !p.grounded) {
       p.fireCD = 0.225;
-      p.heat += 0.155;
+      if (this.allowOverheat) p.heat += 0.155;
 
       this.bullets.push({
         x: p.x + Math.cos(p.a) * 35,
         y: p.y + Math.sin(p.a) * 35,
-        vx: Math.cos(p.a) * 780,
-        vy: Math.sin(p.a) * 780,
+        vx: Math.cos(p.a) * 720,
+        vy: Math.sin(p.a) * 720,
         life: 1.15,
         owner: p.slot
       });
@@ -287,10 +296,15 @@ export class DogfightRoom extends DurableObject {
       }
     }
 
+    if (message.type === "rules" && attachment.host) {
+      this.allowOverheat = message.rules?.overheat !== false;
+      this.broadcastLobby();
+    }
+
     if ((message.type === "start" || message.type === "rematch") && attachment.host) {
       const sockets = this.ctx.getWebSockets();
       if (sockets.length < 2) {
-        try { ws.send(JSON.stringify({type:"start_error", message:"Need at least 2 connected players", serverVersion:15})); } catch {}
+        try { ws.send(JSON.stringify({type:"start_error", message:"Need at least 2 connected players", serverVersion:16})); } catch {}
         return;
       }
       this.allowOverheat = message.rules?.overheat !== false;
@@ -302,7 +316,7 @@ export class DogfightRoom extends DurableObject {
         ws.send(JSON.stringify({
           type: "pong",
           clientTime: message.clientTime,
-          serverVersion: 15
+          serverVersion: 16
         }));
       } catch {}
     }
@@ -326,7 +340,7 @@ export default {
     const url = new URL(request.url);
     const match = url.pathname.match(/^\/room\/([A-Z0-9]{5})$/i);
 
-    if (!match) return new Response("Dogfight Arena multiplayer V15");
+    if (!match) return new Response("Dogfight Arena multiplayer V16");
 
     const id = env.DOGFIGHT_ROOMS.idFromName(match[1].toUpperCase());
     return env.DOGFIGHT_ROOMS.get(id).fetch(request);
