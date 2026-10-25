@@ -42,7 +42,7 @@ export class DogfightRoom extends DurableObject {
 
   async fetch(request) {
     if (request.headers.get("Upgrade") !== "websocket") {
-      return new Response("Dogfight Arena multiplayer V20", { status: 200 });
+      return new Response("Dogfight Arena multiplayer V21", { status: 200 });
     }
 
     const pair = new WebSocketPair();
@@ -60,7 +60,7 @@ export class DogfightRoom extends DurableObject {
     this.ctx.acceptWebSocket(server);
     this.players.set(slot, this.makePlayer(slot));
 
-    server.send(JSON.stringify({ type: "welcome", id, slot, host, serverVersion: 20 }));
+    server.send(JSON.stringify({ type: "welcome", id, slot, host, serverVersion: 21 }));
     this.broadcastLobby();
 
     return new Response(null, { status: 101, webSocket: client });
@@ -78,7 +78,7 @@ export class DogfightRoom extends DurableObject {
       const a = ws.deserializeAttachment();
       return { id: a.id, slot: a.slot, host: a.host };
     });
-    this.broadcast({ type: "lobby", players, serverVersion: 20, rules: { overheat: this.allowOverheat } });
+    this.broadcast({ type: "lobby", players, serverVersion: 21, rules: { overheat: this.allowOverheat } });
   }
 
   startMatch() {
@@ -101,7 +101,7 @@ export class DogfightRoom extends DurableObject {
       type: "start",
       count: sockets.length,
       slots: sockets.map(ws => ws.deserializeAttachment().slot),
-      serverVersion: 20,
+      serverVersion: 21,
       rules: { overheat: this.allowOverheat }
     });
 
@@ -135,7 +135,7 @@ export class DogfightRoom extends DurableObject {
         const dx=b.x-ox,dy=b.y-oy,len2=dx*dx+dy*dy;
         let t=len2>0?((p.x-ox)*dx+(p.y-oy)*dy)/len2:0;t=Math.max(0,Math.min(1,t));
         const cx=ox+dx*t,cy=oy+dy*t;
-        if(Math.hypot(p.x-cx,p.y-cy)<27){b.life=0;p.hp--;if(p.hp<=0)this.killPlayer(p);break}
+        if(Math.hypot(p.x-cx,p.y-cy)<28){b.life=0;p.hp--;if(p.hp<=0)this.killPlayer(p);break}
       }
     }
 
@@ -150,7 +150,7 @@ export class DogfightRoom extends DurableObject {
     }
 
     this.broadcast({
-      type: "snapshot", serverVersion: 20, tick: this.tickId,
+      type: "snapshot", serverVersion: 21, tick: this.tickId,
       players: [...this.players.values()].map(p => ({
         slot: p.slot, x: p.x, y: p.y, a: p.a, v: p.v,
         grounded: p.grounded, alive: p.alive,
@@ -163,11 +163,13 @@ export class DogfightRoom extends DurableObject {
       winner: this.winner
     });
     if (this.winner !== null) {
-      this.broadcast({type:"match_end", serverVersion:20, winner:this.winner});
+      this.broadcast({type:"match_end", serverVersion:21, winner:this.winner});
     }
   }
 
   stepPlayer(p, dt) {
+    if (!Number.isFinite(p.v)) p.v = p.grounded ? 0 : 260;
+    if (p.alive && !p.grounded && p.v < 150) p.v = 150;
     if (!p.alive) return;
 
     const I = p.input;
@@ -302,7 +304,7 @@ export class DogfightRoom extends DurableObject {
     if ((message.type === "start" || message.type === "rematch") && attachment.host) {
       const sockets = this.ctx.getWebSockets();
       if (sockets.length < 2) {
-        try { ws.send(JSON.stringify({type:"start_error", message:"Need at least 2 connected players", serverVersion:20})); } catch {}
+        try { ws.send(JSON.stringify({type:"start_error", message:"Need at least 2 connected players", serverVersion:21})); } catch {}
         return;
       }
       this.allowOverheat = message.rules?.overheat !== false;
@@ -314,7 +316,7 @@ export class DogfightRoom extends DurableObject {
         ws.send(JSON.stringify({
           type: "pong",
           clientTime: message.clientTime,
-          serverVersion: 20
+          serverVersion: 21
         }));
       } catch {}
     }
@@ -338,7 +340,7 @@ export default {
     const url = new URL(request.url);
     const match = url.pathname.match(/^\/room\/([A-Z0-9]{5})$/i);
 
-    if (!match) return new Response("Dogfight Arena multiplayer V20");
+    if (!match) return new Response("Dogfight Arena multiplayer V21");
 
     const id = env.DOGFIGHT_ROOMS.idFromName(match[1].toUpperCase());
     return env.DOGFIGHT_ROOMS.get(id).fetch(request);
