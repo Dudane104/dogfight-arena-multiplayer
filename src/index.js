@@ -42,7 +42,7 @@ export class DogfightRoom extends DurableObject {
 
   async fetch(request) {
     if (request.headers.get("Upgrade") !== "websocket") {
-      return new Response("Dogfight Arena multiplayer V18", { status: 200 });
+      return new Response("Dogfight Arena multiplayer V19", { status: 200 });
     }
 
     const pair = new WebSocketPair();
@@ -60,7 +60,7 @@ export class DogfightRoom extends DurableObject {
     this.ctx.acceptWebSocket(server);
     this.players.set(slot, this.makePlayer(slot));
 
-    server.send(JSON.stringify({ type: "welcome", id, slot, host, serverVersion: 18 }));
+    server.send(JSON.stringify({ type: "welcome", id, slot, host, serverVersion: 19 }));
     this.broadcastLobby();
 
     return new Response(null, { status: 101, webSocket: client });
@@ -78,7 +78,7 @@ export class DogfightRoom extends DurableObject {
       const a = ws.deserializeAttachment();
       return { id: a.id, slot: a.slot, host: a.host };
     });
-    this.broadcast({ type: "lobby", players, serverVersion: 18, rules: { overheat: this.allowOverheat } });
+    this.broadcast({ type: "lobby", players, serverVersion: 19, rules: { overheat: this.allowOverheat } });
   }
 
   startMatch() {
@@ -101,7 +101,7 @@ export class DogfightRoom extends DurableObject {
       type: "start",
       count: sockets.length,
       slots: sockets.map(ws => ws.deserializeAttachment().slot),
-      serverVersion: 18,
+      serverVersion: 19,
       rules: { overheat: this.allowOverheat }
     });
 
@@ -129,18 +129,13 @@ export class DogfightRoom extends DurableObject {
     }
 
     for (const b of this.bullets) {
-      b.x += b.vx * dt;
-      b.y += b.vy * dt;
-      b.life -= dt;
-
-      for (const p of this.players.values()) {
-        if (!p.alive || p.slot === b.owner || p.spawn > 0) continue;
-        if (Math.hypot(p.x - b.x, p.y - b.y) < 28) {
-          b.life = 0;
-          p.hp--;
-          if (p.hp <= 0) this.killPlayer(p);
-          break;
-        }
+      const ox=b.x,oy=b.y;b.x+=b.vx*dt;b.y+=b.vy*dt;b.life-=dt;
+      for(const p of this.players.values()){
+        if(!p.alive||p.slot===b.owner||p.spawn>0)continue;
+        const dx=b.x-ox,dy=b.y-oy,len2=dx*dx+dy*dy;
+        let t=len2>0?((p.x-ox)*dx+(p.y-oy)*dy)/len2:0;t=Math.max(0,Math.min(1,t));
+        const cx=ox+dx*t,cy=oy+dy*t;
+        if(Math.hypot(p.x-cx,p.y-cy)<27){b.life=0;p.hp--;if(p.hp<=0)this.killPlayer(p);break}
       }
     }
 
@@ -155,7 +150,7 @@ export class DogfightRoom extends DurableObject {
     }
 
     this.broadcast({
-      type: "snapshot", serverVersion: 18, tick: this.tickId,
+      type: "snapshot", serverVersion: 19, tick: this.tickId,
       players: [...this.players.values()].map(p => ({
         slot: p.slot, x: p.x, y: p.y, a: p.a, v: p.v,
         grounded: p.grounded, alive: p.alive,
@@ -304,7 +299,7 @@ export class DogfightRoom extends DurableObject {
     if ((message.type === "start" || message.type === "rematch") && attachment.host) {
       const sockets = this.ctx.getWebSockets();
       if (sockets.length < 2) {
-        try { ws.send(JSON.stringify({type:"start_error", message:"Need at least 2 connected players", serverVersion:18})); } catch {}
+        try { ws.send(JSON.stringify({type:"start_error", message:"Need at least 2 connected players", serverVersion:19})); } catch {}
         return;
       }
       this.allowOverheat = message.rules?.overheat !== false;
@@ -316,7 +311,7 @@ export class DogfightRoom extends DurableObject {
         ws.send(JSON.stringify({
           type: "pong",
           clientTime: message.clientTime,
-          serverVersion: 18
+          serverVersion: 19
         }));
       } catch {}
     }
@@ -340,7 +335,7 @@ export default {
     const url = new URL(request.url);
     const match = url.pathname.match(/^\/room\/([A-Z0-9]{5})$/i);
 
-    if (!match) return new Response("Dogfight Arena multiplayer V18");
+    if (!match) return new Response("Dogfight Arena multiplayer V19");
 
     const id = env.DOGFIGHT_ROOMS.idFromName(match[1].toUpperCase());
     return env.DOGFIGHT_ROOMS.get(id).fetch(request);
