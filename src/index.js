@@ -42,7 +42,7 @@ export class DogfightRoom extends DurableObject {
 
   async fetch(request) {
     if (request.headers.get("Upgrade") !== "websocket") {
-      return new Response("Dogfight Arena multiplayer V14", { status: 200 });
+      return new Response("Dogfight Arena multiplayer V15", { status: 200 });
     }
 
     const pair = new WebSocketPair();
@@ -60,7 +60,7 @@ export class DogfightRoom extends DurableObject {
     this.ctx.acceptWebSocket(server);
     this.players.set(slot, this.makePlayer(slot));
 
-    server.send(JSON.stringify({ type: "welcome", id, slot, host, serverVersion: 14 }));
+    server.send(JSON.stringify({ type: "welcome", id, slot, host, serverVersion: 15 }));
     this.broadcastLobby();
 
     return new Response(null, { status: 101, webSocket: client });
@@ -78,7 +78,7 @@ export class DogfightRoom extends DurableObject {
       const a = ws.deserializeAttachment();
       return { id: a.id, slot: a.slot, host: a.host };
     });
-    this.broadcast({ type: "lobby", players, serverVersion: 14 });
+    this.broadcast({ type: "lobby", players, serverVersion: 15 });
   }
 
   startMatch() {
@@ -101,7 +101,7 @@ export class DogfightRoom extends DurableObject {
       type: "start",
       count: sockets.length,
       slots: sockets.map(ws => ws.deserializeAttachment().slot),
-      serverVersion: 14,
+      serverVersion: 15,
       rules: { overheat: this.allowOverheat }
     });
 
@@ -146,7 +146,7 @@ export class DogfightRoom extends DurableObject {
     }
 
     this.broadcast({
-      type: "snapshot", serverVersion: 14, tick: this.tickId,
+      type: "snapshot", serverVersion: 15, tick: this.tickId,
       players: [...this.players.values()].map(p => ({
         slot: p.slot, x: p.x, y: p.y, a: p.a, v: p.v,
         grounded: p.grounded, alive: p.alive,
@@ -290,7 +290,7 @@ export class DogfightRoom extends DurableObject {
     if ((message.type === "start" || message.type === "rematch") && attachment.host) {
       const sockets = this.ctx.getWebSockets();
       if (sockets.length < 2) {
-        try { ws.send(JSON.stringify({type:"start_error", message:"Need at least 2 connected players", serverVersion:14})); } catch {}
+        try { ws.send(JSON.stringify({type:"start_error", message:"Need at least 2 connected players", serverVersion:15})); } catch {}
         return;
       }
       this.allowOverheat = message.rules?.overheat !== false;
@@ -302,7 +302,7 @@ export class DogfightRoom extends DurableObject {
         ws.send(JSON.stringify({
           type: "pong",
           clientTime: message.clientTime,
-          serverVersion: 14
+          serverVersion: 15
         }));
       } catch {}
     }
@@ -326,7 +326,7 @@ export default {
     const url = new URL(request.url);
     const match = url.pathname.match(/^\/room\/([A-Z0-9]{5})$/i);
 
-    if (!match) return new Response("Dogfight Arena multiplayer V14");
+    if (!match) return new Response("Dogfight Arena multiplayer V15");
 
     const id = env.DOGFIGHT_ROOMS.idFromName(match[1].toUpperCase());
     return env.DOGFIGHT_ROOMS.get(id).fetch(request);
